@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liveness Check - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Face Verification</h3>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label class="form-label">Face Verification</label>
+                                <div class="camera-container position-relative">
+                                    <video id="video" playsinline autoplay playsInline webkit-playsinline style="width: 100%; max-width: 400px;"></video>
+                                    <canvas id="canvas" style="display: none;"></canvas>
+                                    <div id="overlay-instructions" class="position-absolute top-50 start-50 translate-middle text-center p-3 rounded" style="background: rgba(0,0,0,0.7); color: white;">
+                                        <span id="instruction-text">Click Start Detection to begin</span>
+                                        <div class="progress mt-2" style="height: 5px;">
+                                            <div id="blink-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" id="startDetection" class="btn btn-success mt-2">Start Detection</button>
+                                <button type="button" id="capture" class="btn btn-primary mt-2" disabled>Waiting for Blink</button>
+                                <input type="hidden" name="face_image_data" id="face_image_data">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Submit</button>
+                        </form>
+
+                        <script>
+                            const video = document.getElementById('video');
+                            const canvas = document.getElementById('canvas');
+                            const captureButton = document.getElementById('capture');
+                            const faceImageData = document.getElementById('face_image_data');
+                            let blinkDetected = false;
+                            let lastEyeState = 'open';
+                            let blinkProgress = 0;
+                            let detectionInterval = null;
+
+                            function updateProgress() {
+                                const progressBar = document.getElementById('blink-progress');
+                                progressBar.style.width = `${blinkProgress}%`;
+
+                                if (blinkProgress >= 100) {
+                                    document.getElementById('overlay-instructions').style.backgroundColor = 'rgba(40, 167, 69, 0.7)';
+                                    document.getElementById('instruction-text').textContent = 'Verification successful! Proceeding to vote...';
+                                    if (detectionInterval) {
+                                        clearInterval(detectionInterval);
+                                    }
+                                    
+                                    // Hide the buttons and form
+                                    document.getElementById('startDetection').style.display = 'none';
+                                    document.getElementById('capture').style.display = 'none';
+                                    document.querySelector('button[type="submit"]').style.display = 'none';
+                                    
+                                    // Auto capture photo
+                                    canvas.width = video.videoWidth;
+                                    canvas.height = video.videoHeight;
+                                    canvas.getContext('2d').drawImage(video, 0, 0);
+                                    faceImageData.value = canvas.toDataURL('image/jpeg');
+
+                                    // Stop camera
+                                    const stream = video.srcObject;
+                                    if (stream) {
+                                        stream.getTracks().forEach(track => track.stop());
+                                    }
+                                    video.srcObject = null;
+
+                                    // Auto submit form after a brief delay to show success message
+                                    setTimeout(() => {
+                                        document.querySelector('form').submit();
+                                    }, 1500);
+                                }
+                            }
+
+                            async function startCamera() {
+                                try {
+                                    // Check for iOS Safari
+                                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                                    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+                                    // First check if mediaDevices is supported
+                                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                                        if (isIOS && isSafari) {
+                                            alert("For iOS Safari:\n1. Make sure camera access is enabled in Settings\n2. Use HTTPS\n3. Add to Home Screen for best compatibility");
+                                        }
+                                        throw new Error('Browser API for camera access not available');
+                                    }
+
+                                    let constraints = {
+                                        audio: false,
+                                        video: {
+                                            facingMode: 'user',
+                                            width: { min: 320, ideal: 640, max: 1920 },
+                                            height: { min: 240, ideal: 480, max: 1080 }
+                                        }
+                                    };
+
+                                    // Special handling for iOS Safari
+                                    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                                        constraints = {
+                                            audio: false,
+                                            video: true
+                                        };
+                                    }
+
+
+                                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                                    video.srcObject = stream;
+                                    video.onloadedmetadata = () => {
+                                        video.play().catch(e => {
+                                            console.error("Error playing video:", e);
+                                            alert("Error starting video stream. Please refresh and try again.");
+                                        });
+                                    };
+
+                                    // Enable the start detection button once camera is ready
+                                    document.getElementById('startDetection').disabled = false;
+                                } catch (err) {
+                                    console.error("Error accessing camera:", err);
+                                    alert("Could not access camera. Please ensure:\n1. Camera permissions are granted\n2. Camera is not being used by another application\n3. You are using a secure (HTTPS) connection");
+                                }
+                            }
+
+                            // Start camera when page loads
+                            document.addEventListener('DOMContentLoaded', () => {
+                                document.getElementById('startDetection').disabled = true;
+                                startCamera();
+                            });
+
+                            // Add face guide overlay
+                            const overlayCanvas = document.createElement('canvas');
+                            overlayCanvas.style.position = 'absolute';
+                            overlayCanvas.style.top = '0';
+                            overlayCanvas.style.left = '0';
+                            overlayCanvas.style.width = '100%';
+                            overlayCanvas.style.height = '100%';
+                            document.querySelector('.camera-container').appendChild(overlayCanvas);
+
+                            function drawFaceGuide() {
+                                const ctx = overlayCanvas.getContext('2d');
+                                overlayCanvas.width = video.videoWidth;
+                                overlayCanvas.height = video.videoHeight;
+
+                                // Draw oval face guide
+                                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                                ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                const centerX = overlayCanvas.width / 2;
+                                const centerY = overlayCanvas.height / 2;
+                                // Draw larger oval guide (increased size by 60%)
+                ctx.ellipse(centerX, centerY, 160, 220, 0, 0, 2 * Math.PI);
+                                ctx.stroke();
+
+                                // Add guide text
+                                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                                ctx.font = '16px Arial';
+                                ctx.textAlign = 'center';
+                                ctx.fillText('Position your face within the oval', centerX, centerY - 160);
+                            }
+
+                            function checkFacePosition(imageData) {
+                                return fetch('/check_blink', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({ image: imageData })
+                                })
+                                .then(response => response.json());
+                            }
+
+                            document.getElementById('startDetection').addEventListener('click', () => {
+                                document.getElementById('startDetection').style.display = 'none';
+                                document.getElementById('instruction-text').textContent = 'Checking face position...';
+                                drawFaceGuide();
+
+                                const checkPosition = setInterval(() => {
+                                    const tempCanvas = document.createElement('canvas');
+                                    tempCanvas.width = video.videoWidth;
+                                    tempCanvas.height = video.videoHeight;
+                                    const ctx = tempCanvas.getContext('2d');
+                                    ctx.drawImage(video, 0, 0);
+
+                                    checkFacePosition(tempCanvas.toDataURL('image/jpeg'))
+                                        .then(data => {
+                                            if (!data.face_detected) {
+                                                document.getElementById('instruction-text').textContent = 'Move MUCH closer to camera - your face should fill most of the oval';
+                                                return;
+                                            }
+                                            if (!data.face_centered) {
+                                                document.getElementById('instruction-text').textContent = 'Move closer and center your face in the oval guide';
+                                                return;
+                                            }
+
+                                            // Face is in good position, start blink detection
+                                            clearInterval(checkPosition);
+                                            document.getElementById('instruction-text').textContent = 'Position good! Please blink naturally';
+                                            startBlinkDetection();
+                                        });
+                                }, 500);
+
+                                function startBlinkDetection() {
+                                    const tempCanvas = document.createElement('canvas');
+                                    tempCanvas.width = video.videoWidth;
+                                    tempCanvas.height = video.videoHeight;
+                                    const ctx = tempCanvas.getContext('2d');
+
+                                    detectionInterval = setInterval(() => {
+                                        if (!blinkDetected) {
+                                            ctx.drawImage(video, 0, 0);
+                                            const imageData = tempCanvas.toDataURL('image/jpeg');
+
+                                            fetch('/check_blink', {
+                                                method: 'POST',
+                                                headers: {
+                                                    'Content-Type': 'application/json',
+                                                },
+                                                body: JSON.stringify({ image: imageData })
+                                            })
+                                            .then(response => response.json())
+                                            .then(data => {
+                                                if (data.eyes_closed && lastEyeState === 'open') {
+                                                    blinkProgress += 34;
+                                                    updateProgress();
+                                                    lastEyeState = 'closed';
+                                                } else if (!data.eyes_closed) {
+                                                    lastEyeState = 'open';
+                                                }
+                                            });
+                                        }
+                                    }, 100);
+                                }
+                            });
+
+                            captureButton.addEventListener('click', () => {
+                                canvas.width = video.videoWidth;
+                                canvas.height = video.videoHeight;
+                                canvas.getContext('2d').drawImage(video, 0, 0);
+                                faceImageData.value = canvas.toDataURL('image/jpeg');
+                                captureButton.textContent = 'Photo Captured';
+                                captureButton.classList.remove('btn-primary');
+                                captureButton.classList.add('btn-success');
+
+                                const stream = video.srcObject;
+                                if (stream) {
+                                    stream.getTracks().forEach(track => track.stop());
+                                }
+                                video.srcObject = null;
+                            });
+
+                            startCamera();
+                        </script>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

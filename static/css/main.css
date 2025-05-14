@@ -1,0 +1,193 @@
+
+.camera-container {
+    position: relative;
+    margin: 20px 0;
+}
+
+#overlay-instructions {
+    z-index: 10;
+    min-width: 200px;
+}
+
+.progress {
+    background-color: rgba(255,255,255,0.2);
+}
+
+.progress-bar {
+    background-color: #28a745;
+    transition: width 0.3s ease-in-out;
+}
+
+body {
+    padding-top: 20px;
+    padding-bottom: 40px;
+}
+
+.card {
+    margin-bottom: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}
+
+.card-header {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+pre {
+    padding: 10px;
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.9rem;
+}
+
+.verification-success {
+    background-color: rgba(25, 135, 84, 0.15);
+    border-color: var(--bs-success);
+}
+
+.verification-failed {
+    background-color: rgba(220, 53, 69, 0.15);
+    border-color: var(--bs-danger);
+}
+
+.qr-image-container {
+    padding: 15px;
+    background: white;
+    display: inline-block;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.btn {
+    margin-right: 5px;
+    margin-bottom: 5px;
+}
+
+.lead {
+    font-size: 1.1rem;
+}
+
+.about-section {
+    font-size: 0.95rem;
+}
+
+.about-section h5 {
+    margin-top: 15px;
+    font-weight: 600;
+}
+
+footer {
+    margin-top: 40px;
+    font-size: 0.85rem;
+    color: #6c757d;
+}
+
+.candidate-result {
+    margin: 15px 0;
+}
+
+.candidate-result .name {
+    margin-bottom: 5px;
+    color: #aaa;
+}
+
+.candidate-result .progress {
+    height: 25px;
+    background: #1a1d20;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.candidate-result .progress-bar {
+    height: 100%;
+    background: #0d6efd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    transition: width 0.3s ease;
+}
+.dashboard {
+    position: fixed;
+    left: -300px;
+    top: 0;
+    width: 300px;
+    height: 100%;
+    background: #2c3338;
+    transition: 0.3s;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.2);
+    z-index: 1000;
+}
+
+.dashboard.open {
+    left: 0;
+}
+
+.dashboard-toggle {
+    position: absolute;
+    right: -80px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #2c3338;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    border-radius: 0 5px 5px 0;
+}
+
+.dashboard-content {
+    padding: 20px;
+    color: white;
+}
+
+.stats {
+    display: flex;
+    justify-content: space-between;
+    margin: 20px 0;
+}
+
+.stat-item {
+    text-align: center;
+    flex: 1;
+}
+
+.stat-item h5 {
+    margin: 0;
+    font-size: 14px;
+    color: #aaa;
+}
+
+.stat-item p {
+    margin: 5px 0;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.candidate-result {
+    margin: 15px 0;
+}
+
+.candidate-result .name {
+    margin-bottom: 5px;
+    color: #aaa;
+}
+
+.candidate-result .progress {
+    height: 25px;
+    background: #1a1d20;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.candidate-result .progress-bar {
+    height: 100%;
+    background: #0d6efd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    transition: width 0.3s ease;
+}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vote Confirmed - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        {% if already_voted %}
+        <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">Already Voted!</h4>
+            <p>You have already cast your vote. Below is your vote audit trail for reference.</p>
+        </div>
+        {% else %}
+        <div class="alert alert-success" role="alert">
+            <h4 class="alert-heading">Vote Recorded Successfully!</h4>
+            <p>Your vote has been securely recorded and a QR audit trail has been generated.</p>
+        </div>
+        {% endif %}
+
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">Your Vote Audit Trail</h5>
+            </div>
+            <div class="card-body text-center">
+                <img src="{{ url_for('static', filename=session.get('qr_path').replace('static/', '')) }}" 
+                     alt="Vote Audit QR Code" class="img-fluid mb-3">
+                <p class="text-muted">This QR code contains a cryptographic proof of your vote.</p>
+                <p class="text-muted">Keep it safe for future verification.</p>
+                <div class="mt-3">
+                    <h6>Vote Hash (Save this for verification):</h6>
+                    <code class="text-break">{{ session.get('vote_hash') }}</code>
+                    <p class="mt-3">
+                        <a href="{{ url_for('verify_vote') }}" class="btn btn-secondary">Verify Another Vote</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

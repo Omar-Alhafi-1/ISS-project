@@ -1,0 +1,42 @@
+
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Vote - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="card">
+            <div class="card-header">
+                <h4>Vote Verification</h4>
+            </div>
+            <div class="card-body">
+                {% if verified is not defined %}
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="qr_hash" class="form-label">Enter QR Code Hash</label>
+                        <input type="text" class="form-control" id="qr_hash" name="qr_hash" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Verify Vote</button>
+                </form>
+                {% elif verified %}
+                <div class="alert alert-success">
+                    <h5>Vote Verified Successfully!</h5>
+                    <p>Vote cast for: {{ candidate }}</p>
+                    <p>Time: {{ vote_time }}</p>
+                </div>
+                {% else %}
+                <div class="alert alert-danger">
+                    <h5>Invalid QR Code</h5>
+                    <p>Could not verify this vote. Please check the QR code and try again.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

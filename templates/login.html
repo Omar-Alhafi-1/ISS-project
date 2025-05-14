@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Voter Login</h3>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" id="loginForm">
+                            <div class="mb-3">
+                                <label for="email" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="email" name="email" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="password" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="useFaceVerification">
+                                    <label class="form-check-label" for="useFaceVerification">
+                                        Use Face Verification
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="faceVerificationSection" class="mb-3" style="display: none;">
+                                <div class="video-container">
+                                    <video id="video" width="100%" autoplay></video>
+                                    <canvas id="canvas" style="display: none;"></canvas>
+                                </div>
+                                <button type="button" class="btn btn-secondary mt-2" id="captureButton">Capture Face</button>
+                                <input type="hidden" name="face_image_data" id="faceImageData">
+                            </div>
+                            <div class="mb-3">
+                                <a href="{{ url_for('register') }}">New voter? Register here</a>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row justify-content-center mt-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Live Voting Status</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="stats mb-4">
+                            <div class="row text-center">
+                                <div class="col-md-4">
+                                    <h5>Total Voters</h5>
+                                    <p id="totalVoters" class="h3">0</p>
+                                </div>
+                                <div class="col-md-4">
+                                    <h5>Voted</h5>
+                                    <p id="votedCount" class="h3">0</p>
+                                </div>
+                                <div class="col-md-4">
+                                    <h5>Remaining</h5>
+                                    <p id="remainingVoters" class="h3">0</p>
+                                </div>
+                            </div>
+                        </div>
+                        <h4>Candidate Results</h4>
+                        <div id="candidateResults"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Face verification setup
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureButton = document.getElementById('captureButton');
+        const faceImageData = document.getElementById('faceImageData');
+        const useFaceVerification = document.getElementById('useFaceVerification');
+        const faceVerificationSection = document.getElementById('faceVerificationSection');
+
+        useFaceVerification.addEventListener('change', function() {
+            faceVerificationSection.style.display = this.checked ? 'block' : 'none';
+            if (this.checked) {
+                startCamera();
+            } else {
+                stopCamera();
+            }
+        });
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Error accessing camera. Please ensure you have granted camera permissions.');
+            }
+        }
+
+        function stopCamera() {
+            const stream = video.srcObject;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+        }
+
+        captureButton.addEventListener('click', function() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            faceImageData.value = canvas.toDataURL('image/jpeg');
+        });
+
+        // Dashboard update
+        function updateDashboard() {
+            fetch('/dashboard_data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('totalVoters').textContent = data.total_voters;
+                    document.getElementById('votedCount').textContent = data.voted_count;
+                    document.getElementById('remainingVoters').textContent = data.remaining_voters;
+
+                    const resultsHtml = data.candidate_votes.map(candidate => `
+                        <div class="candidate-result mb-3">
+                            <div class="name">${candidate.name}</div>
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" 
+                                     style="width: ${candidate.percentage}%" 
+                                     aria-valuenow="${candidate.percentage}" 
+                                     aria-valuemin="0" aria-valuemax="100">
+                                    ${candidate.votes} (${candidate.percentage.toFixed(1)}%)
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                    document.getElementById('candidateResults').innerHTML = resultsHtml;
+                });
+        }
+
+        // Update dashboard every 5 seconds
+        updateDashboard();
+        setInterval(updateDashboard, 5000);
+    </script>
+</body>
+</html>

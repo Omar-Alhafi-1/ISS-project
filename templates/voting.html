@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cast Your Vote - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div id="dashboard" class="dashboard">
+        <button id="dashboardToggle" class="dashboard-toggle">Dashboard</button>
+        <div class="dashboard-content">
+            <h3>Voting Status</h3>
+            <div class="stats">
+                <div class="stat-item">
+                    <h5>Total Voters</h5>
+                    <p id="totalVoters">0</p>
+                </div>
+                <div class="stat-item">
+                    <h5>Voted</h5>
+                    <p id="votedCount">0</p>
+                </div>
+                <div class="stat-item">
+                    <h5>Remaining</h5>
+                    <p id="remainingVoters">0</p>
+                </div>
+            </div>
+            <h4>Candidate Results</h4>
+            <div id="candidateResults"></div>
+        </div>
+    </div>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Cast Your Vote</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="errorAlert" class="alert alert-danger" style="display: none;"></div>
+                        <form id="votingForm" method="POST" action="{{ url_for('cast_vote') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="candidates-list">
+                                {% for candidate in candidates %}
+                                <div class="candidate-card mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="candidate_id" 
+                                               id="candidate{{ candidate.id }}" value="{{ candidate.id }}" required>
+                                        <label class="form-check-label" for="candidate{{ candidate.id }}">
+                                            <h5>{{ candidate.name }}</h5>
+                                            {% if candidate.party %}
+                                            <p class="text-muted">Party: {{ candidate.party }}</p>
+                                            {% endif %}
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="mt-4">
+                                <button type="submit" class="btn btn-primary">Submit Vote</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dashboard = document.getElementById('dashboard');
+        const dashboardToggle = document.getElementById('dashboardToggle');
+
+        dashboardToggle.addEventListener('click', () => {
+            dashboard.classList.toggle('open');
+        });
+
+        function updateDashboard() {
+            fetch('/dashboard_data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('totalVoters').textContent = data.total_voters;
+                    document.getElementById('votedCount').textContent = data.voted_count;
+                    document.getElementById('remainingVoters').textContent = data.remaining_voters;
+
+                    const resultsHtml = data.candidate_votes.map(candidate => `
+                        <div class="candidate-result">
+                            <div class="name">${candidate.name}</div>
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" 
+                                     style="width: ${candidate.percentage}%" 
+                                     aria-valuenow="${candidate.percentage}" 
+                                     aria-valuemin="0" aria-valuemax="100">
+                                    ${candidate.votes} (${candidate.percentage.toFixed(1)}%)
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                    document.getElementById('candidateResults').innerHTML = resultsHtml;
+                });
+        }
+
+        // Update dashboard every 5 seconds
+        updateDashboard();
+        setInterval(updateDashboard, 5000);
+
+        document.getElementById('votingForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const errorAlert = document.getElementById('errorAlert');
+            errorAlert.style.display = 'none';
+            
+            try {
+                const response = await fetch('{{ url_for("cast_vote") }}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Redirect to confirmation page with vote details
+                    window.location.href = `{{ url_for('vote_confirmation') }}?qr_path=${encodeURIComponent(data.qr_path)}&vote_hash=${encodeURIComponent(data.vote_hash)}`;
+                } else {
+                    errorAlert.textContent = data.error || 'An error occurred while processing your vote.';
+                    errorAlert.style.display = 'block';
+                    console.error('Vote submission error:', data);
+                }
+            } catch (error) {
+                console.error('Vote submission error:', error);
+                errorAlert.textContent = 'An error occurred while processing your vote. Please try again.';
+                errorAlert.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
