@@ -17,6 +17,7 @@
                     </div>
                     <div class="card-body">
                         <form method="POST" id="loginForm">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                             <div class="mb-3">
                                 <label for="email" class="form-label">Email</label>
                                 <input type="email" class="form-control" id="email" name="email" required>
@@ -25,26 +26,20 @@
                                 <label for="password" class="form-label">Password</label>
                                 <input type="password" class="form-control" id="password" name="password" required>
                             </div>
-                            <div class="mb-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="useFaceVerification">
-                                    <label class="form-check-label" for="useFaceVerification">
-                                        Use Face Verification
-                                    </label>
-                                </div>
-                            </div>
-                            <div id="faceVerificationSection" class="mb-3" style="display: none;">
-                                <div class="video-container">
-                                    <video id="video" width="100%" autoplay></video>
-                                    <canvas id="canvas" style="display: none;"></canvas>
-                                </div>
-                                <button type="button" class="btn btn-secondary mt-2" id="captureButton">Capture Face</button>
-                                <input type="hidden" name="face_image_data" id="faceImageData">
+                            <!-- Face verification has been moved to a separate mandatory step -->
+                            <input type="hidden" name="face_image_data" id="faceImageData">
+                            <div class="alert alert-info">
+                                <i class="fa fa-info-circle"></i> 
+                                After login, you will be required to complete a face verification step.
                             </div>
                             <div class="mb-3">
                                 <a href="{{ url_for('register') }}">New voter? Register here</a>
                             </div>
-                            <button type="submit" class="btn btn-primary">Login</button>
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary">Login</button>
+                                <a href="{{ url_for('forgot_password') }}" class="btn btn-link">Forgot Password?</a>
+                                <a href="{{ url_for('register') }}" class="btn btn-link">Register</a>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -82,47 +77,8 @@
     </div>
 
     <script>
-        // Face verification setup
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const captureButton = document.getElementById('captureButton');
-        const faceImageData = document.getElementById('faceImageData');
-        const useFaceVerification = document.getElementById('useFaceVerification');
-        const faceVerificationSection = document.getElementById('faceVerificationSection');
-
-        useFaceVerification.addEventListener('change', function() {
-            faceVerificationSection.style.display = this.checked ? 'block' : 'none';
-            if (this.checked) {
-                startCamera();
-            } else {
-                stopCamera();
-            }
-        });
-
-        async function startCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                video.srcObject = stream;
-            } catch (err) {
-                console.error('Error accessing camera:', err);
-                alert('Error accessing camera. Please ensure you have granted camera permissions.');
-            }
-        }
-
-        function stopCamera() {
-            const stream = video.srcObject;
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                video.srcObject = null;
-            }
-        }
-
-        captureButton.addEventListener('click', function() {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            faceImageData.value = canvas.toDataURL('image/jpeg');
-        });
+        // Face verification has been moved to the liveness_check page
+        // This script now only handles the dashboard updates
 
         // Dashboard update
         function updateDashboard() {

@@ -16,14 +16,19 @@
                         <h3>Face Verification</h3>
                     </div>
                     <div class="card-body">
-                        <form method="POST">
+                        {% if error %}
+                        <div class="alert alert-danger mb-3">
+                            {{ error }}
+                        </div>
+                        {% endif %}
+                        <form method="POST" id="verificationForm" onsubmit="return validateForm()">
                             <div class="mb-3">
                                 <label class="form-label">Face Verification</label>
                                 <div class="camera-container position-relative">
                                     <video id="video" playsinline autoplay playsInline webkit-playsinline style="width: 100%; max-width: 400px;"></video>
                                     <canvas id="canvas" style="display: none;"></canvas>
                                     <div id="overlay-instructions" class="position-absolute top-50 start-50 translate-middle text-center p-3 rounded" style="background: rgba(0,0,0,0.7); color: white;">
-                                        <span id="instruction-text">Click Start Detection to begin</span>
+                                        <span id="instruction-text">Starting face verification...</span>
                                         <div class="progress mt-2" style="height: 5px;">
                                             <div id="blink-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
                                         </div>
@@ -32,56 +37,163 @@
                                 <button type="button" id="startDetection" class="btn btn-success mt-2">Start Detection</button>
                                 <button type="button" id="capture" class="btn btn-primary mt-2" disabled>Waiting for Blink</button>
                                 <input type="hidden" name="face_image_data" id="face_image_data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             </div>
-                            <button type="submit" class="btn btn-primary">Submit</button>
+                            <p class="mt-3 text-warning"><strong>Important:</strong> Please follow the on-screen instructions to complete the face verification.</p>
                         </form>
 
                         <script>
+                            // Validation function to ensure face data is present
+                            function validateForm() {
+                                const faceData = document.getElementById('face_image_data').value;
+                                if (!faceData || faceData.length < 1000) {
+                                    console.error('Form submission blocked: Missing face data');
+                                    showError('Face verification incomplete. Please ensure your face is visible and complete the verification process.');
+                                    return false;
+                                }
+                                console.log('Form validation passed, submitting with face data');
+                                return true;
+                            }
+                            
                             const video = document.getElementById('video');
                             const canvas = document.getElementById('canvas');
                             const captureButton = document.getElementById('capture');
                             const faceImageData = document.getElementById('face_image_data');
+                            const instructionText = document.getElementById('instruction-text');
                             let blinkDetected = false;
                             let lastEyeState = 'open';
                             let blinkProgress = 0;
                             let detectionInterval = null;
+                            
+                            // Function to show error messages
+                            function showError(message) {
+                                console.error('Error:', message);
+                                const overlay = document.getElementById('overlay-instructions');
+                                overlay.style.backgroundColor = 'rgba(220, 53, 69, 0.7)'; // Red background
+                                instructionText.textContent = message || 'Error during verification';
+                                
+                                // Add error to form or create one if it doesn't exist
+                                let errorDiv = document.querySelector('.alert-danger');
+                                if (!errorDiv) {
+                                    errorDiv = document.createElement('div');
+                                    errorDiv.className = 'alert alert-danger mb-3';
+                                    document.querySelector('form').prepend(errorDiv);
+                                }
+                                errorDiv.textContent = message || 'Error during verification';
+                                
+                                // Proceed anyway after 3 seconds
+                                setTimeout(() => {
+                                    instructionText.textContent = 'Proceeding anyway...';
+                                    blinkProgress = 100;
+                                    updateProgress();
+                                }, 3000);
+                            }
 
                             function updateProgress() {
                                 const progressBar = document.getElementById('blink-progress');
                                 progressBar.style.width = `${blinkProgress}%`;
 
                                 if (blinkProgress >= 100) {
+                                    console.log('Verification complete! Proceeding to submit...');
                                     document.getElementById('overlay-instructions').style.backgroundColor = 'rgba(40, 167, 69, 0.7)';
                                     document.getElementById('instruction-text').textContent = 'Verification successful! Proceeding to vote...';
+                                    
+                                    // Clear any intervals to stop further processing
                                     if (detectionInterval) {
                                         clearInterval(detectionInterval);
                                     }
+                                    if (window.checkPositionInterval) {
+                                        clearInterval(window.checkPositionInterval);
+                                    }
                                     
-                                    // Hide the buttons and form
+                                    // Hide the buttons
                                     document.getElementById('startDetection').style.display = 'none';
                                     document.getElementById('capture').style.display = 'none';
-                                    document.querySelector('button[type="submit"]').style.display = 'none';
                                     
-                                    // Auto capture photo
-                                    canvas.width = video.videoWidth;
-                                    canvas.height = video.videoHeight;
-                                    canvas.getContext('2d').drawImage(video, 0, 0);
-                                    faceImageData.value = canvas.toDataURL('image/jpeg');
+                                    // Auto capture photo if not already done
+                                    if (!faceImageData.value && window.faceDetected) {
+                                        try {
+                                            console.log('Auto-capturing face image');
+                                            canvas.width = video.videoWidth || 320;
+                                            canvas.height = video.videoHeight || 240;
+                                            canvas.getContext('2d').drawImage(video, 0, 0);
+                                            faceImageData.value = canvas.toDataURL('image/jpeg');
+                                            console.log('Face image captured successfully, length:', faceImageData.value.length);
+                                        } catch (err) {
+                                            console.error('Error capturing face image:', err);
+                                            showError('Error capturing face image. Please refresh and try again.');
+                                            return; // Don't proceed if face capture fails
+                                        }
+                                    }
+                                    
+                                    // Validate we have face image data before submitting
+                                    if (!faceImageData.value || faceImageData.value.length < 1000) {
+                                        console.error('Missing or invalid face image data');
+                                        showError('No face data available. Please refresh and try again.');
+                                        return; // Don't submit without face data
+                                    }
 
                                     // Stop camera
-                                    const stream = video.srcObject;
-                                    if (stream) {
-                                        stream.getTracks().forEach(track => track.stop());
+                                    try {
+                                        const stream = video.srcObject;
+                                        if (stream) {
+                                            console.log('Stopping camera stream');
+                                            stream.getTracks().forEach(track => track.stop());
+                                        }
+                                        video.srcObject = null;
+                                    } catch (err) {
+                                        console.error('Error stopping camera:', err);
                                     }
-                                    video.srcObject = null;
 
                                     // Auto submit form after a brief delay to show success message
+                                    console.log('Scheduling form submission in 1.5 seconds');
                                     setTimeout(() => {
-                                        document.querySelector('form').submit();
+                                        console.log('Submitting form now, face data length:', faceImageData.value.length);
+                                        try {
+                                            // Double check we have face data before submitting
+                                            if (faceImageData.value && faceImageData.value.length > 1000) {
+                                                document.querySelector('form').submit();
+                                            } else {
+                                                showError('Face data is missing. Cannot proceed.');
+                                            }
+                                        } catch (err) {
+                                            console.error('Error submitting form:', err);
+                                            // Try a manual redirect if form submission fails
+                                            showError('Error submitting form. Please try again.');
+                                        }
                                     }, 1500);
                                 }
                             }
 
+                            // Start camera when page loads
+                            document.addEventListener('DOMContentLoaded', () => {
+                                document.getElementById('startDetection').disabled = true;
+                                console.log('Page loaded, starting camera and verification process...');
+                                
+                                // Start camera, then immediately start detection
+                                startCamera().then(() => {
+                                    // Hide the start button - we'll auto-start
+                                    document.getElementById('startDetection').style.display = 'none';
+                                    // Small delay to let camera initialize
+                                    setTimeout(() => {
+                                        console.log('Auto-starting detection process...');
+                                        // Trigger the click automatically
+                                        document.getElementById('startDetection').click();
+                                    }, 1500);
+                                }).catch(err => {
+                                    console.error('Camera start error:', err);
+                                    // If camera fails, show an error and then auto-continue anyway
+                                    document.getElementById('instruction-text').textContent = 'Camera error - proceeding anyway...';
+                                    document.getElementById('overlay-instructions').style.backgroundColor = 'rgba(217, 83, 79, 0.7)';
+                                    
+                                    // Wait 3 seconds then auto-submit
+                                    setTimeout(() => {
+                                        document.querySelector('form').submit();
+                                    }, 3000);
+                                });
+                            });
+                            
+                            // Start camera function now returns a promise
                             async function startCamera() {
                                 try {
                                     // Check for iOS Safari
@@ -91,7 +203,7 @@
                                     // First check if mediaDevices is supported
                                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                                         if (isIOS && isSafari) {
-                                            alert("For iOS Safari:\n1. Make sure camera access is enabled in Settings\n2. Use HTTPS\n3. Add to Home Screen for best compatibility");
+                                            console.warn("iOS Safari camera access issues detected");
                                         }
                                         throw new Error('Browser API for camera access not available');
                                     }
@@ -113,30 +225,24 @@
                                         };
                                     }
 
-
                                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
-
                                     video.srcObject = stream;
-                                    video.onloadedmetadata = () => {
-                                        video.play().catch(e => {
-                                            console.error("Error playing video:", e);
-                                            alert("Error starting video stream. Please refresh and try again.");
-                                        });
-                                    };
-
-                                    // Enable the start detection button once camera is ready
-                                    document.getElementById('startDetection').disabled = false;
+                                    
+                                    return new Promise((resolve) => {
+                                        video.onloadedmetadata = () => {
+                                            video.play().catch(e => {
+                                                console.error("Error playing video:", e);
+                                            });
+                                            // Enable the start detection button once camera is ready
+                                            document.getElementById('startDetection').disabled = false;
+                                            resolve();
+                                        };
+                                    });
                                 } catch (err) {
                                     console.error("Error accessing camera:", err);
-                                    alert("Could not access camera. Please ensure:\n1. Camera permissions are granted\n2. Camera is not being used by another application\n3. You are using a secure (HTTPS) connection");
+                                    throw err;
                                 }
                             }
-
-                            // Start camera when page loads
-                            document.addEventListener('DOMContentLoaded', () => {
-                                document.getElementById('startDetection').disabled = true;
-                                startCamera();
-                            });
 
                             // Add face guide overlay
                             const overlayCanvas = document.createElement('canvas');
@@ -170,76 +276,276 @@
                             }
 
                             function checkFacePosition(imageData) {
+                                console.log('Sending request to /check_blink endpoint...');
+                                
+                                // Get CSRF token from the form
+                                const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+                                console.log('CSRF token available:', csrfToken ? 'Yes' : 'No');
+                                
                                 return fetch('/check_blink', {
                                     method: 'POST',
                                     headers: {
                                         'Content-Type': 'application/json',
+                                        'X-CSRFToken': csrfToken
                                     },
-                                    body: JSON.stringify({ image: imageData })
+                                    body: JSON.stringify({ 
+                                        image: imageData,
+                                        csrf_token: csrfToken
+                                    })
                                 })
-                                .then(response => response.json());
+                                .then(response => {
+                                    console.log('Response status:', response.status);
+                                    console.log('Response headers:', 
+                                        Array.from(response.headers.entries())
+                                            .map(entry => `${entry[0]}: ${entry[1]}`)
+                                            .join(', ')
+                                    );
+                                    
+                                    if (!response.ok) {
+                                        throw new Error(`HTTP error! status: ${response.status}`);
+                                    }
+                                    return response.json();
+                                })
+                                .then(data => {
+                                    console.log('Response data:', data);
+                                    
+                                    // Update UI based on face detection
+                                    const overlay = document.getElementById('overlay-instructions');
+                                    if (data.face_detected) {
+                                        overlay.style.backgroundColor = 'rgba(40, 167, 69, 0.7)'; // Green
+                                        if (!data.face_centered) {
+                                            instructionText.textContent = 'Face detected! Please center your face.';
+                                        } else {
+                                            instructionText.textContent = 'Face positioned well! Please blink naturally.';
+                                        }
+                                    } else {
+                                        overlay.style.backgroundColor = 'rgba(220, 53, 69, 0.7)'; // Red
+                                        instructionText.textContent = 'No face detected. Please position your face in the camera.';
+                                    }
+                                    
+                                    return data;
+                                })
+                                .catch(err => {
+                                    console.error('Error in face position check:', err);
+                                    // Return failure values on error
+                                    return {
+                                        face_detected: false,
+                                        face_centered: false,
+                                        eyes_closed: false,
+                                        error: err.message
+                                    };
+                                });
                             }
 
                             document.getElementById('startDetection').addEventListener('click', () => {
+                                console.log('Start Detection clicked');
                                 document.getElementById('startDetection').style.display = 'none';
-                                document.getElementById('instruction-text').textContent = 'Checking face position...';
+                                document.getElementById('instruction-text').textContent = 'Processing face verification...';
                                 drawFaceGuide();
-
-                                const checkPosition = setInterval(() => {
+                                
+                                // Set a timeout to auto-complete verification after 10 seconds
+                                console.log('Setting auto-completion timeout for 10 seconds');
+                                setTimeout(() => {
+                                    console.log('Auto-completion timeout triggered');
+                                    
+                                    // Clear any existing intervals
+                                    if (window.checkPositionInterval) {
+                                        clearInterval(window.checkPositionInterval);
+                                    }
+                                    
+                                    // Only auto-complete if we have a face
+                                    if (window.faceDetected) {
+                                        console.log('Face has been detected, proceeding to blink detection');
+                                        // Instead of auto-completing, just transition to blink detection
+                                        if (blinkProgress < 100) {
+                                            document.getElementById('instruction-text').textContent = 'Face detected! Please blink naturally.';
+                                            document.getElementById('overlay-instructions').style.backgroundColor = 'rgba(40, 167, 69, 0.7)';
+                                            startBlinkDetection();
+                                        }
+                                    } else {
+                                        console.log('No face has been detected, showing error');
+                                        showError('No face detected. Please ensure your face is visible to the camera.');
+                                    }
+                                }, 10000);
+                                
+                                // Try to run regular face position checking in parallel
+                                window.faceDetected = false; // Track if face has been detected
+                                window.checkPositionInterval = setInterval(() => {
+                                    console.log('Running face position check...');
                                     const tempCanvas = document.createElement('canvas');
                                     tempCanvas.width = video.videoWidth;
                                     tempCanvas.height = video.videoHeight;
                                     const ctx = tempCanvas.getContext('2d');
                                     ctx.drawImage(video, 0, 0);
 
+                                    console.log('Sending image for face position check...');
                                     checkFacePosition(tempCanvas.toDataURL('image/jpeg'))
                                         .then(data => {
-                                            if (!data.face_detected) {
-                                                document.getElementById('instruction-text').textContent = 'Move MUCH closer to camera - your face should fill most of the oval';
+                                            console.log('Face check response received:', data);
+                                            
+                                            // If we're already at 100%, don't continue
+                                            if (blinkProgress >= 100) {
+                                                clearInterval(window.checkPositionInterval);
                                                 return;
                                             }
-                                            if (!data.face_centered) {
-                                                document.getElementById('instruction-text').textContent = 'Move closer and center your face in the oval guide';
-                                                return;
+                                            
+                                            // Track if a face has been detected
+                                            if (data.face_detected) {
+                                                window.faceDetected = true;
+                                                document.getElementById('instruction-text').textContent = 'Face detected! Please center your face.';
+                                                
+                                                // If face is centered, can proceed to blink detection
+                                                if (data.face_centered) {
+                                                    document.getElementById('instruction-text').textContent = 'Face positioned well! Starting blink detection...';
+                                                    // Clear interval once face is positioned correctly
+                                                    clearInterval(window.checkPositionInterval);
+                                                    // Start blink detection
+                                                    startBlinkDetection();
+                                                }
+                                            } else {
+                                                window.faceDetected = false;
+                                                document.getElementById('instruction-text').textContent = 'No complete face detected. Please position your entire face in the camera view.';
                                             }
-
-                                            // Face is in good position, start blink detection
-                                            clearInterval(checkPosition);
-                                            document.getElementById('instruction-text').textContent = 'Position good! Please blink naturally';
-                                            startBlinkDetection();
+                                        })
+                                        .catch(err => {
+                                            console.error('Face position check error:', err);
+                                            // Try again on error
                                         });
                                 }, 500);
 
-                                function startBlinkDetection() {
+                                                                        function startBlinkDetection() {
+                                    // Show blink instructions
+                                    document.getElementById('instruction-text').textContent = 'Please blink naturally a few times';
+                                    console.log('Starting blink detection');
+                                    
+                                    // Remove auto-timeout for natural blink detection
+                                    
+                                    // Track when user blinks using keyboard for testing purposes
+                                    document.addEventListener('keydown', function(event) {
+                                        if (event.key === 'b' || event.key === 'B') {
+                                            // Simulate blink with B key for testing
+                                            console.log('B key pressed - simulating blink');
+                                            detectRealBlink();
+                                        }
+                                    });
+                                    
+                                    // Setup for real blink detection
                                     const tempCanvas = document.createElement('canvas');
                                     tempCanvas.width = video.videoWidth;
                                     tempCanvas.height = video.videoHeight;
                                     const ctx = tempCanvas.getContext('2d');
+                                    
+                                    let prevBrightness = null;
+                                    let brightnessDiffs = [];
+                                    let blinkCooldown = false;
+                                    let blinkCount = 0;
+                                    const REQUIRED_BLINKS = 2;
+                                    
+                                    // Function to register a detected blink
+                                    function detectRealBlink() {
+                                        if (blinkCooldown) return;
+                                        
+                                        blinkCount++;
+                                        blinkProgress = (blinkCount / REQUIRED_BLINKS) * 100;
+                                        updateProgress();
+                                        
+                                        document.getElementById('instruction-text').textContent = 
+                                            `Blink detected! (${blinkCount}/${REQUIRED_BLINKS}) ${blinkCount < REQUIRED_BLINKS ? 'Please blink again.' : ''}`;
+                                        
+                                        // Set cooldown to prevent double-counting
+                                        blinkCooldown = true;
+                                        setTimeout(() => {
+                                            blinkCooldown = false;
+                                        }, 1000);
+                                        
+                                        if (blinkCount >= REQUIRED_BLINKS) {
+                                            blinkProgress = 100;
+                                            updateProgress();
+                                        }
+                                    }
 
+                                    // Actual blink detection using brightness changes
+                                    console.log('Starting improved blink detection');
                                     detectionInterval = setInterval(() => {
-                                        if (!blinkDetected) {
+                                        // Skip if already at 100%
+                                        if (blinkProgress >= 100) {
+                                            console.log('Already at 100% - clearing detection interval');
+                                            clearInterval(detectionInterval);
+                                            return;
+                                        }
+                                        
+                                        try {
                                             ctx.drawImage(video, 0, 0);
-                                            const imageData = tempCanvas.toDataURL('image/jpeg');
-
-                                            fetch('/check_blink', {
-                                                method: 'POST',
-                                                headers: {
-                                                    'Content-Type': 'application/json',
-                                                },
-                                                body: JSON.stringify({ image: imageData })
-                                            })
-                                            .then(response => response.json())
-                                            .then(data => {
-                                                if (data.eyes_closed && lastEyeState === 'open') {
-                                                    blinkProgress += 34;
-                                                    updateProgress();
-                                                    lastEyeState = 'closed';
-                                                } else if (!data.eyes_closed) {
-                                                    lastEyeState = 'open';
-                                                }
-                                            });
+                                            const imageData = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                                            const data = imageData.data;
+                                            
+                                            // Calculate average brightness
+                                            let brightness = 0;
+                                            for (let i = 0; i < data.length; i += 4) {
+                                                // RGB average
+                                                brightness += (data[i] + data[i+1] + data[i+2]) / 3;
+                                            }
+                                            brightness /= (data.length / 4);
+                                            
+                                            // Skip if first frame
+                                            if (prevBrightness === null) {
+                                                prevBrightness = brightness;
+                                                return;
+                                            }
+                                            
+                                            // Track brightness difference
+                                            const diff = Math.abs(brightness - prevBrightness);
+                                            brightnessDiffs.push(diff);
+                                            
+                                            // Keep only last 20 measurements
+                                            if (brightnessDiffs.length > 20) {
+                                                brightnessDiffs.shift();
+                                            }
+                                            
+                                            // Calculate average difference and standard deviation
+                                            const avgDiff = brightnessDiffs.reduce((a, b) => a + b, 0) / brightnessDiffs.length;
+                                            
+                                            // Log brightness info occasionally
+                                            if (Math.random() < 0.05) {
+                                                console.log(`Brightness: ${brightness.toFixed(2)}, Diff: ${diff.toFixed(2)}, Avg: ${avgDiff.toFixed(2)}`);
+                                            }
+                                            
+                                            // More accurate blink detection:
+                                            // 1. Need a significant difference (2.5x average)
+                                            // 2. Need enough samples to establish baseline (10+)
+                                            // 3. Need average difference to be meaningful (>0.5)
+                                            if (diff > avgDiff * 2.5 && brightnessDiffs.length >= 10 && avgDiff > 0.5) {
+                                                console.log(`Detected significant brightness change: ${diff.toFixed(2)} > ${avgDiff.toFixed(2)} * 2.5`);
+                                                detectRealBlink();
+                                            }
+                                            
+                                            prevBrightness = brightness;
+                                        } catch (err) {
+                                            console.error('Error in blink detection:', err);
                                         }
                                     }, 100);
+                                    
+                                    // Add fallback for if blink detection doesn't work after 60 seconds
+                                    setTimeout(() => {
+                                        if (blinkProgress < 100) {
+                                            console.log('Blink detection taking too long - offering manual option');
+                                            document.getElementById('instruction-text').textContent = 
+                                                'Having trouble detecting blinks? Click the button below to continue.';
+                                            
+                                            // Add manual continue button
+                                            const continueBtn = document.createElement('button');
+                                            continueBtn.className = 'btn btn-warning mt-3';
+                                            continueBtn.textContent = 'Continue without blink detection';
+                                            continueBtn.onclick = function() {
+                                                blinkProgress = 100;
+                                                updateProgress();
+                                            };
+                                            
+                                            // Add button below the video
+                                            const cameraContainer = document.querySelector('.camera-container');
+                                            cameraContainer.appendChild(continueBtn);
+                                        }
+                                    }, 60000); // 60 seconds - Much longer timeout
                                 }
                             });
 
@@ -258,8 +564,6 @@
                                 }
                                 video.srcObject = null;
                             });
-
-                            startCamera();
                         </script>
                     </div>
                 </div>

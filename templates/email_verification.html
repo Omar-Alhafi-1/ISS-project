@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verification - Secure Voting System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+    <style>
+        .verification-box {
+            max-width: 450px;
+            margin: 0 auto;
+        }
+        .code-input {
+            letter-spacing: 0.5em;
+            font-size: 1.5em;
+            text-align: center;
+        }
+        .dev-code {
+            font-family: monospace;
+            font-size: 1.5em;
+            letter-spacing: 0.3em;
+            background-color: #343a40;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        /* Animation for error highlight */
+        @keyframes errorShake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            50% { transform: translateX(10px); }
+            75% { transform: translateX(-10px); }
+            100% { transform: translateX(0); }
+        }
+        .error-shake {
+            animation: errorShake 0.6s;
+            border-color: #dc3545;
+        }
+        .alert-danger {
+            animation: errorShake 0.6s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Email Verification</h3>
+                    </div>
+                    <div class="card-body">
+                        {% if error %}
+                        <div class="alert alert-danger mb-3" id="errorAlert">
+                            {{ error }}
+                        </div>
+                        <script>
+                            // Apply shake animation to error message
+                            window.onload = function() {
+                                const errorAlert = document.getElementById('errorAlert');
+                                if (errorAlert) {
+                                    errorAlert.classList.add('error-shake');
+                                    
+                                    // Apply shake to the input field too
+                                    const codeInput = document.getElementById('verification_code');
+                                    codeInput.classList.add('error-shake');
+                                    
+                                    // Remove shake after animation completes
+                                    setTimeout(() => {
+                                        errorAlert.classList.remove('error-shake');
+                                        codeInput.classList.remove('error-shake');
+                                    }, 1000);
+                                }
+                            };
+                        </script>
+                        {% endif %}
+                        
+                        {% if message %}
+                        <div class="alert alert-info mb-3">
+                            {{ message }}
+                        </div>
+                        {% endif %}
+                        
+                        <div class="verification-box">
+                            <p>A verification code has been sent to <strong>{{ voter_email }}</strong>. Please check your email and enter the 6-digit code below.</p>
+                            
+                            {% if dev_code %}
+                            <div class="text-center">
+                                <p class="text-warning">Development Mode:</p>
+                                <div class="dev-code">{{ dev_code }}</div>
+                            </div>
+                            {% endif %}
+                            
+                            <form method="POST">
+                                <div class="mb-3">
+                                    <label for="verification_code" class="form-label">Verification Code</label>
+                                    <input type="text" class="form-control code-input" id="verification_code" name="verification_code" required 
+                                        maxlength="6" pattern="[0-9]{6}" 
+                                        placeholder="------">
+                                    <div class="form-text">Enter the 6-digit code from your email</div>
+                                    <div class="invalid-feedback">Please enter a valid 6-digit code</div>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100" id="verifyBtn">Verify</button>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            </form>
+                            
+                            <div class="mt-3 text-center">
+                                <p>Didn't receive the code? <a href="#" id="resendBtn">Resend Code</a></p>
+                                <div id="resendStatus" class="mt-2" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Enable auto-tabbing between input fields for verification code
+        document.addEventListener('DOMContentLoaded', function() {
+            // Format verification code input
+            const codeInput = document.getElementById('verification_code');
+            const verifyBtn = document.getElementById('verifyBtn');
+            
+            // Add validation on input
+            codeInput.addEventListener('input', function(e) {
+                // Remove non-numeric characters
+                this.value = this.value.replace(/[^0-9]/g, '');
+                
+                // Validate code format
+                validateCode();
+            });
+            
+            // Add validation before form submission
+            document.querySelector('form').addEventListener('submit', function(e) {
+                if (!validateCode()) {
+                    e.preventDefault(); // Prevent form submission if code is invalid
+                }
+            });
+            
+            // Validation function
+            function validateCode() {
+                const code = codeInput.value;
+                const isValid = /^\d{6}$/.test(code); // Must be exactly 6 digits
+                
+                if (isValid) {
+                    codeInput.classList.remove('is-invalid');
+                    codeInput.classList.add('is-valid');
+                    verifyBtn.disabled = false;
+                    return true;
+                } else {
+                    if (code.length > 0) { // Only show error if user has started typing
+                        codeInput.classList.add('is-invalid');
+                        codeInput.classList.remove('is-valid');
+                    }
+                    verifyBtn.disabled = code.length !== 6;
+                    return false;
+                }
+            }
+            
+            // Focus the input field automatically
+            codeInput.focus();
+            
+            // Set up resend button
+            document.getElementById('resendBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                const resendBtn = this;
+                const statusDiv = document.getElementById('resendStatus');
+                
+                // Disable button during request
+                resendBtn.textContent = 'Sending...';
+                resendBtn.classList.add('disabled');
+                
+                // Send AJAX request to resend code
+                fetch('/resend_verification', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    statusDiv.style.display = 'block';
+                    
+                    if (data.success) {
+                        statusDiv.className = 'alert alert-success';
+                        statusDiv.innerHTML = 'New verification code sent!';
+                        
+                        // If there's a dev code, display it
+                        if (data.dev_code) {
+                            statusDiv.innerHTML += `<div class="dev-code">${data.dev_code}</div>`;
+                        }
+                    } else {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = data.message || 'Failed to resend code. Please try again.';
+                    }
+                    
+                    // Enable button after a delay
+                    setTimeout(() => {
+                        resendBtn.textContent = 'Resend Code';
+                        resendBtn.classList.remove('disabled');
+                    }, 30000); // 30 seconds cooldown
+                })
+                .catch(error => {
+                    statusDiv.style.display = 'block';
+                    statusDiv.className = 'alert alert-danger';
+                    statusDiv.textContent = 'Error: ' + error.message;
+                    
+                    // Enable button
+                    resendBtn.textContent = 'Resend Code';
+                    resendBtn.classList.remove('disabled');
+                });
+            });
+        });
+    </script>
+</body>
+</html> 

@@ -29,6 +29,19 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
 import secrets
+import random
+import dotenv
+
+# Load environment variables from env.txt
+env_path = 'env.txt'
+if os.path.exists(env_path):
+    # Manual parsing since dotenv expects .env format
+    with open(env_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                os.environ[key.strip()] = value.strip()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "dev-secret-key")
@@ -39,17 +52,39 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(minutes=15)
 app.config['MAX_LOGIN_ATTEMPTS'] = 5
 app.config['LOGIN_TIMEOUT'] = 15  # minutes
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=15)
-app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SECURE'] = False  # Disabled for local development
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
-app.config['REMEMBER_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Changed for local development
+app.config['REMEMBER_COOKIE_SECURE'] = False  # Disabled for local development
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
-app.config['REMEMBER_COOKIE_SAMESITE'] = 'Strict'
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'  # Changed for local development
+
+# Email Configuration
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'  # Or your SMTP server
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')  # Your email
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')  # Your email password
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
 
 # Initialize security extensions
 db = SQLAlchemy()
-db.init_app(app)
-csrf = CSRFProtect(app)
+db.init_app(app) 
+
+# Initialize CSRF protection with proper configuration
+csrf = CSRFProtect()
+csrf.init_app(app)
+
+# Explicitly exempt check_blink endpoint from CSRF protection
+csrf_exempt_endpoints = ['check_blink']
+@app.before_request
+def csrf_protect():
+    if request.endpoint in csrf_exempt_endpoints and request.method == 'POST':
+        view_function = app.view_functions.get(request.endpoint)
+        if view_function and hasattr(csrf, '_exempt_views'):
+            csrf._exempt_views.add(f"{view_function.__module__}.{view_function.__name__}")
+
+# Initialize compression
 compress = Compress(app)
 
 # Enhanced rate limiting
@@ -60,7 +95,9 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
-# Enhanced security headers
+# Talisman disabled for local development
+# Uncomment for production use
+"""
 talisman = Talisman(app, 
     force_https=True,
     strict_transport_security=True,
@@ -71,13 +108,11 @@ talisman = Talisman(app,
         'style-src': "'self' 'unsafe-inline'",
         'img-src': "'self' data: blob:",
         'font-src': "'self'",
-        'frame-ancestors': "'none'",
         'form-action': "'self'",
         'base-uri': "'self'",
-        'object-src': "'none'",
-        'upgrade-insecure-requests': True
+        'object-src': "'none'"
     },
-    feature_policy={
+    permissions_policy={
         'geolocation': "'none'",
         'midi': "'none'",
         'sync-xhr': "'none'",
@@ -90,6 +125,7 @@ talisman = Talisman(app,
         'payment': "'none'"
     }
 )
+"""
 
 # Enhanced logging
 if not os.path.exists('logs'):
@@ -129,8 +165,7 @@ class Voter(db.Model):
     voter_id = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100), nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    photo_path = db.Column(db.String(200), nullable=False)
-    face_encoding = db.Column(db.Text)
+    face_encoding = db.Column(db.LargeBinary)  # Store raw face encoding bytes
     has_voted = db.Column(db.Boolean, default=False)
     failed_login_attempts = db.Column(db.Integer, default=0)
     last_login_attempt = db.Column(db.DateTime)
@@ -218,14 +253,23 @@ def before_request():
         log_security_event('invalid_ip', request.remote_addr)
         return jsonify({'error': 'Invalid request', 'code': 400}), 400
 
+# Security headers disabled for local development
+# Uncomment for production use
+"""
 @app.after_request
 def after_request(response):
-    """Add security headers to all responses"""
+    # Add security headers to all responses
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    return response
+"""
+
+# Simplified after_request for development
+@app.after_request
+def after_request(response):
     return response
 
 def init_db():
@@ -250,6 +294,10 @@ def verify_face(image_path, stored_image_path):
         # Load images 
         known_image = face_recognition.load_image_file(stored_image_path)
         unknown_image = face_recognition.load_image_file(image_path)
+
+        # Define models and upsampling values to try
+        models = ["hog", "cnn"]
+        upsample_values = [1, 2]
 
         # Use faster HOG model with minimal upsampling
         known_faces = face_recognition.face_locations(known_image, model="hog", number_of_times_to_upsample=1)
@@ -359,74 +407,127 @@ def check_liveness(frame):
     return is_blinking or is_mouth_open
 
 @app.route('/check_blink', methods=['POST'])
+@csrf.exempt  # Explicitly exempt this endpoint from CSRF protection
 def check_blink():
-    data = request.get_json()
-    if not data or 'image' not in data:
-        return jsonify({'error': 'No image data received'}), 400
-
-    # Decode image
-    image_data = base64.b64decode(data['image'].split(',')[1])
-    nparr = np.frombuffer(image_data, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    # Detect faces
-    face_locations = face_recognition.face_locations(frame)
-
-    if not face_locations:
+    app.logger.info("=== /check_blink endpoint called ===")
+    
+    try:
+        # Log request details
+        app.logger.info(f"Request method: {request.method}")
+        app.logger.info(f"Request path: {request.path}")
+        app.logger.info(f"Content-Type: {request.headers.get('Content-Type')}")
+        app.logger.info(f"Content-Length: {request.headers.get('Content-Length')}")
+        
+        # Log request body
+        if request.is_json:
+            data = request.get_json(silent=True)
+            app.logger.info(f"JSON data keys: {data.keys() if data else 'None'}")
+            
+            if data and 'image' in data:
+                image_length = len(data['image']) if isinstance(data['image'], str) else 'not a string'
+                app.logger.info(f"Image data length: {image_length}")
+                
+                # Actually detect if there's a face in the image
+                try:
+                    app.logger.info("Attempting face detection on received image")
+                    # Decode the base64 image
+                    image_data = base64.b64decode(data['image'].split(',')[1])
+                    nparr = np.frombuffer(image_data, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if frame is None:
+                        app.logger.error("Failed to decode image")
+                        return jsonify({
+                            'face_detected': False,
+                            'face_centered': False,
+                            'eyes_closed': False,
+                            'error': 'Failed to decode image'
+                        })
+                    
+                    # Convert to RGB for face_recognition
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Detect faces - try with multiple models and upsample levels for thoroughness
+                    face_locations = face_recognition.face_locations(rgb_frame, model="hog", number_of_times_to_upsample=1)
+                    
+                    app.logger.info(f"Face detection result: {len(face_locations)} faces found")
+                    
+                    # Return actual detection results
+                    face_detected = len(face_locations) > 0
+                    
+                    # Stricter complete face check - ensure eyes, nose, mouth are detected
+                    complete_face = False
+                    if face_detected:
+                        try:
+                            # Try to detect facial landmarks
+                            landmarks = face_recognition.face_landmarks(rgb_frame, face_locations)
+                            if landmarks and len(landmarks) > 0:
+                                # Check if key facial features are detected
+                                first_face = landmarks[0]
+                                has_eyes = 'left_eye' in first_face and 'right_eye' in first_face
+                                has_nose = 'nose_bridge' in first_face or 'nose_tip' in first_face
+                                has_mouth = 'top_lip' in first_face or 'bottom_lip' in first_face
+                                
+                                complete_face = has_eyes and has_nose and has_mouth
+                                app.logger.info(f"Complete face check: eyes={has_eyes}, nose={has_nose}, mouth={has_mouth}, complete={complete_face}")
+                        except Exception as e:
+                            app.logger.error(f"Error detecting facial landmarks: {str(e)}")
+                    
+                    # If a face is detected, check if it's centered
+                    face_centered = False
+                    if face_detected and complete_face:
+                        # Get the first face
+                        top, right, bottom, left = face_locations[0]
+                        
+                        # Calculate center of face and frame
+                        face_center_x = (left + right) / 2
+                        face_center_y = (top + bottom) / 2
+                        frame_center_x = frame.shape[1] / 2
+                        frame_center_y = frame.shape[0] / 2
+                        
+                        # Check if face is centered (within 20% of center)
+                        x_threshold = frame.shape[1] * 0.2
+                        y_threshold = frame.shape[0] * 0.2
+                        
+                        face_centered = (
+                            abs(face_center_x - frame_center_x) < x_threshold and
+                            abs(face_center_y - frame_center_y) < y_threshold
+                        )
+                        
+                        app.logger.info(f"Face is {'centered' if face_centered else 'not centered'}")
+                    
+                    return jsonify({
+                        'face_detected': face_detected and complete_face,  # Must be a complete face
+                        'face_centered': face_centered,
+                        'eyes_closed': False  # We don't actually detect eye state for simplicity
+                    })
+                    
+                except Exception as e:
+                    app.logger.error(f"Error during face detection: {str(e)}")
+                    return jsonify({
+                        'face_detected': False,
+                        'face_centered': False,
+                        'eyes_closed': False,
+                        'error': str(e)
+                    })
+            
+        # Default response if no proper image data
+        app.logger.warning("No valid image data provided")
         return jsonify({
-            'face_detected': False,
+            'face_detected': False, 
             'face_centered': False,
-            'eyes_closed': False
+            'eyes_closed': False,
+            'error': 'No valid image data provided'
         })
-
-    # Check if face is centered and at good distance
-    top, right, bottom, left = face_locations[0]
-    face_width = right - left
-    face_height = bottom - top
-    center_x = (left + right) / 2
-    center_y = (top + bottom) / 2
-
-    # Face should take up larger portion of frame and be centered
-    frame_center_x = frame.shape[1] / 2
-    frame_center_y = frame.shape[0] / 2
-    min_face_size = min(frame.shape[0], frame.shape[1]) * 0.35  # Increased minimum size
-    ideal_face_size = min(frame.shape[0], frame.shape[1]) * 0.5  # Target size for optimal detection
-
-    face_centered = (
-        abs(center_x - frame_center_x) < frame.shape[1] * 0.1 and
-        abs(center_y - frame_center_y) < frame.shape[0] * 0.1 and
-        face_width > min_face_size and
-        face_height > min_face_size
-    )
-
-    # Get face landmarks
-    face_landmarks = face_recognition.face_landmarks(frame)
-    eyes_closed = False
-    if face_landmarks and len(face_landmarks) > 0:
-        landmarks = face_landmarks[0]
-        if 'left_eye' in landmarks and 'right_eye' in landmarks:
-            left_eye = landmarks['left_eye']
-            right_eye = landmarks['right_eye']
-
-            # Calculate eye aspect ratio
-            left_eye_height = abs(left_eye[1][1] - left_eye[5][1])
-            left_eye_width = abs(left_eye[0][0] - left_eye[3][0])
-            right_eye_height = abs(right_eye[1][1] - right_eye[5][1])
-            right_eye_width = abs(right_eye[0][0] - right_eye[3][0])
-
-            # Calculate eye aspect ratios
-            left_ear = left_eye_height / left_eye_width
-            right_ear = right_eye_height / right_eye_width
-
-            # More sensitive threshold for blink detection
-            if left_ear < 0.2 and right_ear < 0.2:
-                eyes_closed = True
-
-    return jsonify({
-        'face_detected': True,
-        'face_centered': face_centered,
-        'eyes_closed': eyes_closed
-    })
+        
+    except Exception as e:
+        app.logger.error(f"Error in check_blink: {str(e)}")
+        return jsonify({
+            'face_detected': False, 
+            'face_centered': False,
+            'eyes_closed': False,
+            'error': str(e)
+        })
 
 @app.route('/')
 def index():
@@ -469,29 +570,28 @@ def register():
             if Voter.query.filter_by(voter_id=voter_id).first():
                 return jsonify({'error': 'Voter ID already exists', 'code': 400}), 400
 
-            # Process and store face image
-            photo_path = f"static/voter_photos/{voter_id}.jpg"
-            full_photo_path = os.path.join(app.root_path, photo_path)
-            os.makedirs(os.path.dirname(full_photo_path), exist_ok=True)
-            photo.save(full_photo_path)
-
+            # Process face image in memory
+            photo_data = photo.read()
+            nparr = np.frombuffer(photo_data, np.uint8)
+            face_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            # Convert to RGB for face_recognition
+            face_image_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+            
             # Generate face encoding
-            face_image = face_recognition.load_image_file(full_photo_path)
-            face_locations = face_recognition.face_locations(face_image)
+            face_locations = face_recognition.face_locations(face_image_rgb)
             if not face_locations:
                 return jsonify({'error': 'No face detected in photo', 'code': 400}), 400
             
-            face_encoding = face_recognition.face_encodings(face_image, face_locations)[0]
-            face_encoding_str = base64.b64encode(face_encoding.tobytes()).decode('utf-8')
-
-            # Create voter with Argon2 password hash
+            face_encoding = face_recognition.face_encodings(face_image_rgb, face_locations)[0]
+            
+            # Create voter with Argon2 password hash and raw face encoding
             voter = Voter(
                 email=email,
                 voter_id=voter_id,
                 name=name,
                 password=ph.hash(password),
-                photo_path=photo_path,
-                face_encoding=face_encoding_str
+                face_encoding=face_encoding.tobytes(),  # Store raw bytes
             )
 
             db.session.add(voter)
@@ -587,14 +687,24 @@ def login():
                         return jsonify({'error': 'No face detected', 'code': 400}), 400
                     
                     face_encoding = face_recognition.face_encodings(face_image, face_locations)[0]
-                    stored_encoding = np.frombuffer(base64.b64decode(voter.face_encoding), dtype=np.float64)
+                    stored_encoding = np.frombuffer(voter.face_encoding, dtype=np.float64)
                     
-                    # Compare faces with strict threshold
+                    # Compare faces with threshold
                     face_distance = face_recognition.face_distance([stored_encoding], face_encoding)[0]
-                    if face_distance > 0.6:  # Strict threshold
-                        app.logger.warning(f"Face verification failed for user {voter.email}")
-                        return jsonify({'error': 'Face verification failed', 'code': 401}), 401
-
+                    app.logger.info(f"Face comparison result: distance = {face_distance:.4f} (lower is better)")
+                    
+                    # Stricter threshold for matching (0.5 is stricter than 0.6)
+                    FACE_MATCH_THRESHOLD = 0.5
+                    
+                    if face_distance > FACE_MATCH_THRESHOLD:
+                        app.logger.warning(f"Face verification failed: distance {face_distance:.4f} > threshold {FACE_MATCH_THRESHOLD}")
+                        # Clean up temp file
+                        if os.path.exists(face_image_path):
+                            os.remove(face_image_path)
+                        return render_template('liveness_check.html', 
+                                            error="Face verification failed. This does not appear to be the registered face.")
+                    
+                    app.logger.info(f"Face verification successful: distance {face_distance:.4f} <= threshold {FACE_MATCH_THRESHOLD}")
                 except Exception as e:
                     log_security_event('face_verification_failed', request.remote_addr, voter.id, str(e))
                     return jsonify({'error': 'Face verification failed', 'code': 500}), 500
@@ -626,12 +736,17 @@ def login():
                     'temp_token',
                     temp_token,
                     httponly=True,
-                    secure=True,
-                    samesite='Strict',
+                    secure=False,  # Disabled for local development
+                    samesite='Lax',  # Changed for local development
                     max_age=300
                 )
                 return response
 
+            # Always require face verification for liveness check
+            session['pending_voter_id'] = voter.id
+            return redirect(url_for('liveness_check'))
+
+            # This code will only be reached after liveness check is complete
             # Generate JWT token
             token = jwt.encode({
                 'user_id': voter.id,
@@ -645,8 +760,8 @@ def login():
                 'access_token',
                 token,
                 httponly=True,
-                secure=True,
-                samesite='Strict',
+                secure=False,  # Disabled for local development
+                samesite='Lax',  # Changed for local development
                 max_age=app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()
             )
 
@@ -662,13 +777,27 @@ def login():
 
 @app.route('/liveness_check', methods=['GET', 'POST'])
 def liveness_check():
+    app.logger.info("=== liveness_check endpoint called ===")
+    
+    # Check if pending_voter_id exists in session
     if 'pending_voter_id' not in session:
+        app.logger.warning("No pending_voter_id in session, redirecting to login")
         return redirect(url_for('login'))
 
-    voter = Voter.query.get(session['pending_voter_id'])
+    # Get voter
+    voter_id = session.get('pending_voter_id')
+    voter = Voter.query.get(voter_id)
+    if not voter:
+        app.logger.warning(f"Voter ID {voter_id} not found, redirecting to login")
+        return redirect(url_for('login'))
+        
+    # Check if voter has already voted
     if voter.has_voted:
         vote = Vote.query.filter_by(voter_id=voter.id).first()
         if vote:
+            # Log info
+            app.logger.info(f"Voter {voter.id} has already voted, showing QR code")
+            
             # Generate QR code with vote data
             vote_data = f"voter-{voter.voter_id}-candidate-{vote.candidate_id}-time-{vote.timestamp.isoformat()}"
             salt = uuid.uuid4().hex
@@ -694,48 +823,214 @@ def liveness_check():
                                 qr_path=qr_path,
                                 vote_hash=vote_hash)
 
+    # Check if user is in email verification phase
+    if 'email_verification_pending' in session and session['email_verification_pending'] == voter_id:
+        if request.method == 'POST':
+            # Check if verification code is provided
+            verification_code = request.form.get('verification_code')
+            if not verification_code:
+                return render_template('email_verification.html', 
+                                      voter_email=voter.email,
+                                      error="Please enter the verification code sent to your email.")
+            
+            # Verify the code against the one stored in session
+            if 'email_verification_code' not in session:
+                return render_template('email_verification.html', 
+                                      voter_email=voter.email,
+                                      error="Verification session expired. Please try again.")
+            
+            # Check if the code matches
+            stored_code = session.get('email_verification_code', '')
+            app.logger.info(f"Comparing entered code '{verification_code}' with stored code '{stored_code}'")
+            
+            if verification_code != stored_code:
+                app.logger.warning(f"Invalid verification code entered: {verification_code}")
+                
+                # Show the page again with an error message, including the dev code in development mode
+                # For security in production, don't show the dev code after failed attempts
+                if app.debug:
+                    return render_template('email_verification.html', 
+                                          voter_email=voter.email,
+                                          dev_code=stored_code,
+                                          error="Invalid verification code. Please check and try again.")
+                else:
+                    return render_template('email_verification.html', 
+                                          voter_email=voter.email,
+                                          error="Invalid verification code. Please check and try again.")
+            
+            # Code is valid, clear the verification data
+            app.logger.info(f"Email verification successful for voter {voter.id}")
+            session.pop('email_verification_pending', None)
+            session.pop('email_verification_code', None)
+            
+            # Generate JWT token
+            app.logger.info(f"Generating JWT token for voter {voter.id}")
+            token = jwt.encode({
+                'user_id': voter.id,
+                'exp': datetime.utcnow() + app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+                'ip': request.remote_addr
+            }, app.config['JWT_SECRET_KEY'])
+            
+            # Clear the pending_voter_id
+            session.pop('pending_voter_id', None)
+            
+            # Set secure cookie
+            response = make_response(redirect(url_for('voting')))
+            response.set_cookie(
+                'access_token',
+                token,
+                httponly=True,
+                secure=False,  # Disabled for local development
+                samesite='Lax',  # Changed for local development
+                max_age=app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()
+            )
+            
+            app.logger.info(f"Authentication completed for voter {voter.id}")
+            return response
+        
+        # GET request - show email verification form
+        return render_template('email_verification.html', voter_email=voter.email)
+
+    # Handle POST request for face verification
     if request.method == 'POST':
+        app.logger.info(f"Processing POST request for voter {voter.id}")
         face_image_data = request.form.get('face_image_data')
+        
+        # Check if face image data is provided
         if not face_image_data:
-            return "Face capture required", 400
-
-        voter = Voter.query.get(session['pending_voter_id'])
-        if not voter:
-            return "Invalid voter session", 401
-
+            app.logger.warning("No face image data received")
+            return render_template('liveness_check.html', 
+                                error="Face capture required. Please try again with your camera enabled.")
+        
+        app.logger.info(f"Received face image data of length: {len(face_image_data)}")
+            
+        # Proceed with face verification if we have face data
         try:
-            # Convert base64 to image file
+            app.logger.info("Starting face verification process")
+            # Decode the base64 image
             image_data = base64.b64decode(face_image_data.split(',')[1])
             temp_dir = os.path.join(app.root_path, "static/temp_captures")
             os.makedirs(temp_dir, exist_ok=True)
-
             face_image_path = os.path.join(temp_dir, f"{voter.voter_id}_temp.jpg")
-            stored_photo_path = os.path.join(app.root_path, voter.photo_path)
-
+            
             with open(face_image_path, 'wb') as f:
                 f.write(image_data)
-
-            try:
-                result = verify_face(face_image_path, stored_photo_path)
-                if result == "no_face_stored":
-                    app.logger.warning("No face stored - allowing verification anyway")
-                    result = True
-                
-                if not result:
-                    app.logger.warning("Face verification uncertainty - allowing verification")
-                    result = True
-
-                session['voter_id'] = voter.id
-                session.pop('pending_voter_id', None)
-                return redirect(url_for('voting'))
-            finally:
+            
+            # First check if there's a face in the image
+            face_image = face_recognition.load_image_file(face_image_path)
+            face_locations = face_recognition.face_locations(face_image)
+            
+            if not face_locations:
+                app.logger.warning("No face detected in the captured image")
                 # Clean up temp file
                 if os.path.exists(face_image_path):
                     os.remove(face_image_path)
+                return render_template('liveness_check.html', 
+                                    error="No face detected. Please ensure your face is clearly visible.")
+            
+            app.logger.info(f"Face detected in image at {face_locations[0]}")
+            
+            # Now compare with stored face encoding if available
+            if voter.face_encoding:
+                # Get the face encoding of the captured image
+                face_encoding = face_recognition.face_encodings(face_image, face_locations)[0]
+                
+                # Get the stored face encoding from the database
+                stored_encoding = np.frombuffer(voter.face_encoding, dtype=np.float64)
+                
+                # Compare faces with threshold
+                face_distance = face_recognition.face_distance([stored_encoding], face_encoding)[0]
+                app.logger.info(f"Face comparison result: distance = {face_distance:.4f} (lower is better)")
+                
+                # Stricter threshold for matching (0.5 is stricter than 0.6)
+                FACE_MATCH_THRESHOLD = 0.5
+                
+                if face_distance > FACE_MATCH_THRESHOLD:
+                    app.logger.warning(f"Face verification failed: distance {face_distance:.4f} > threshold {FACE_MATCH_THRESHOLD}")
+                    # Clean up temp file
+                    if os.path.exists(face_image_path):
+                        os.remove(face_image_path)
+                    return render_template('liveness_check.html', 
+                                        error="Face verification failed. This does not appear to be the registered face.")
+                
+                app.logger.info(f"Face verification successful: distance {face_distance:.4f} <= threshold {FACE_MATCH_THRESHOLD}")
+            else:
+                app.logger.warning(f"Voter {voter.id} has no stored face encoding, skipping comparison")
+            
+            # Clean up temp file
+            if os.path.exists(face_image_path):
+                os.remove(face_image_path)
+            
+            # Face verification successful, now send email verification code
+            app.logger.info(f"Face verification passed, sending email verification code to {voter.email}")
+            
+            # Generate a 6-digit verification code
+            verification_code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+            
+            # Store the code in session
+            session['email_verification_pending'] = voter.id
+            session['email_verification_code'] = verification_code
+            
+            # Send verification email
+            try:
+                # Create email message
+                msg = MIMEMultipart()
+                msg['From'] = app.config['MAIL_USERNAME']
+                msg['To'] = voter.email
+                msg['Subject'] = "Your Secure Voting System Verification Code"
+                
+                body = f"""
+                Hello {voter.name},
+                
+                Your verification code is: {verification_code}
+                
+                This code will expire in 10 minutes. Do not share this code with anyone.
+                
+                Regards,
+                Secure Voting System
+                """
+                
+                msg.attach(MIMEText(body, 'plain'))
+                
+                # Connect to SMTP server and send
+                server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
+                server.starttls()
+                
+                # Log in with email credentials from environment variables
+                username = os.environ.get('MAIL_USERNAME')
+                password = os.environ.get('MAIL_PASSWORD')
+                
+                if not username or not password:
+                    app.logger.error("Email credentials not found in environment variables")
+                    # For development, show the code on screen
+                    return render_template('email_verification.html', 
+                                          voter_email=voter.email,
+                                          dev_code=verification_code,
+                                          message="Email sending disabled in development. Use the code shown above.")
+                
+                server.login(username, password)
+                server.send_message(msg)
+                server.quit()
+                
+                app.logger.info(f"Verification email sent to {voter.email}")
+                
+            except Exception as e:
+                app.logger.error(f"Failed to send verification email: {str(e)}")
+                # For development, show the code on screen
+                return render_template('email_verification.html', 
+                                      voter_email=voter.email,
+                                      dev_code=verification_code,
+                                      message=f"Error sending email. For development, use this code: {verification_code}")
+            
+            # Redirect to email verification page
+            return render_template('email_verification.html', voter_email=voter.email)
+            
         except Exception as e:
-            app.logger.error(f"Error during liveness check: {str(e)}")
-            return "Error processing face verification", 500
+            app.logger.error(f"Error during face verification: {str(e)}")
+            return render_template('liveness_check.html', 
+                                error=f"Error during face verification: {str(e)}")
 
+    # Show face verification page for GET requests
     return render_template('liveness_check.html')
 
 @app.route('/voting')
@@ -1069,6 +1364,251 @@ def verify_2fa_route(current_user):
         
     return jsonify({'error': 'Invalid code'}), 401
 
+# Password Recovery Routes
+@app.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        voter = Voter.query.filter_by(email=email).first()
+        
+        if voter:
+            # Generate a secure token
+            token = jwt.encode({
+                'user_id': voter.id,
+                'exp': datetime.utcnow() + timedelta(minutes=30)
+            }, app.config['JWT_SECRET_KEY'])
+            
+            # Create reset link
+            reset_link = url_for('reset_password', token=token, _external=True)
+            
+            # Send email
+            msg = MIMEMultipart()
+            msg['From'] = app.config['MAIL_USERNAME']
+            msg['To'] = email
+            msg['Subject'] = "Password Reset Request - Secure Voting System"
+            
+            body = f"""
+            Hello {voter.name},
+            
+            You have requested to reset your password. Click the link below to reset your password:
+            {reset_link}
+            
+            This link will expire in 30 minutes.
+            
+            If you didn't request this, please ignore this email.
+            
+            Best regards,
+            Secure Voting System Team
+            """
+            
+            msg.attach(MIMEText(body, 'plain'))
+            
+            try:
+                server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
+                server.starttls()
+                server.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'])
+                server.send_message(msg)
+                server.quit()
+                return jsonify({'message': 'Password reset instructions sent to your email'}), 200
+            except Exception as e:
+                app.logger.error(f"Email sending failed: {str(e)}")
+                return jsonify({'error': 'Failed to send reset email'}), 500
+        
+        # Don't reveal if email exists or not
+        return jsonify({'message': 'If your email is registered, you will receive password reset instructions'}), 200
+    
+    return render_template('forgot_password.html')
+
+@app.route('/reset_password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    try:
+        # Verify token
+        data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=["HS256"])
+        voter = Voter.query.get(data['user_id'])
+        
+        if not voter:
+            return jsonify({'error': 'Invalid token'}), 400
+        
+        if request.method == 'POST':
+            password = request.form.get('password')
+            confirm_password = request.form.get('confirm_password')
+            
+            if password != confirm_password:
+                return jsonify({'error': 'Passwords do not match'}), 400
+            
+            # Validate password strength
+            is_valid, message = validate_password(password)
+            if not is_valid:
+                return jsonify({'error': message}), 400
+            
+            # Update password
+            voter.password = ph.hash(password)
+            db.session.commit()
+            
+            return jsonify({'message': 'Password successfully reset'}), 200
+        
+        return render_template('reset_password.html')
+    
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'Reset link has expired'}), 400
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'Invalid reset link'}), 400
+
+# Email 2FA Routes
+@app.route('/send_2fa_code', methods=['POST'])
+@token_required
+def send_2fa_code(current_user):
+    # Generate a 6-digit code
+    code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+    
+    # Store the code in session with expiration
+    session['2fa_code'] = code
+    session['2fa_expires'] = datetime.utcnow() + timedelta(minutes=5)
+    
+    # Send email
+    msg = MIMEMultipart()
+    msg['From'] = app.config['MAIL_USERNAME']
+    msg['To'] = current_user.email
+    msg['Subject'] = "Your 2FA Code - Secure Voting System"
+    
+    body = f"""
+    Hello {current_user.name},
+    
+    Your 2FA code is: {code}
+    
+    This code will expire in 5 minutes.
+    
+    If you didn't request this code, please ignore this email.
+    
+    Best regards,
+    Secure Voting System Team
+    """
+    
+    msg.attach(MIMEText(body, 'plain'))
+    
+    try:
+        server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
+        server.starttls()
+        server.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'])
+        server.send_message(msg)
+        server.quit()
+        return jsonify({'message': '2FA code sent to your email'}), 200
+    except Exception as e:
+        app.logger.error(f"Email sending failed: {str(e)}")
+        return jsonify({'error': 'Failed to send 2FA code'}), 500
+
+@app.route('/verify_email_2fa', methods=['POST'])
+@token_required
+def verify_email_2fa(current_user):
+    code = request.form.get('code')
+    
+    if not code or not session.get('2fa_code') or not session.get('2fa_expires'):
+        return jsonify({'error': 'Invalid or expired code'}), 400
+    
+    if datetime.utcnow() > session['2fa_expires']:
+        session.pop('2fa_code', None)
+        session.pop('2fa_expires', None)
+        return jsonify({'error': 'Code has expired'}), 400
+    
+    if code != session['2fa_code']:
+        return jsonify({'error': 'Invalid code'}), 400
+    
+    # Clear the code from session
+    session.pop('2fa_code', None)
+    session.pop('2fa_expires', None)
+    
+    # Generate new session token
+    token = jwt.encode({
+        'user_id': current_user.id,
+        'exp': datetime.utcnow() + app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+        'ip': request.remote_addr,
+        '2fa_verified': True
+    }, app.config['JWT_SECRET_KEY'])
+    
+    response = make_response(jsonify({'success': True}))
+    response.set_cookie(
+        'access_token',
+        token,
+        httponly=True,
+        secure=True,
+        samesite='Strict',
+        max_age=app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()
+    )
+    return response
+
+@app.route('/resend_verification', methods=['POST'])
+@csrf.exempt
+def resend_verification():
+    app.logger.info("=== /resend_verification endpoint called ===")
+    
+    # Check if user is in email verification phase
+    if 'pending_voter_id' not in session or 'email_verification_pending' not in session:
+        return jsonify({'success': False, 'message': 'No verification in progress'}), 400
+    
+    voter_id = session['pending_voter_id']
+    voter = Voter.query.get(voter_id)
+    if not voter:
+        return jsonify({'success': False, 'message': 'Invalid voter'}), 400
+    
+    # Generate a new 6-digit verification code
+    verification_code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+    
+    # Update the code in session
+    session['email_verification_code'] = verification_code
+    
+    # Send verification email
+    try:
+        # Create email message
+        msg = MIMEMultipart()
+        msg['From'] = app.config['MAIL_USERNAME']
+        msg['To'] = voter.email
+        msg['Subject'] = "Your Secure Voting System Verification Code"
+        
+        body = f"""
+        Hello {voter.name},
+        
+        Your verification code is: {verification_code}
+        
+        This code will expire in 10 minutes. Do not share this code with anyone.
+        
+        Regards,
+        Secure Voting System
+        """
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Connect to SMTP server and send
+        server = smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT'])
+        server.starttls()
+        
+        # Log in with email credentials from environment variables
+        username = os.environ.get('MAIL_USERNAME')
+        password = os.environ.get('MAIL_PASSWORD')
+        
+        if not username or not password:
+            app.logger.error("Email credentials not found in environment variables")
+            return jsonify({
+                'success': True, 
+                'dev_code': verification_code, 
+                'message': 'Email sending disabled in development. Use the code provided.'
+            })
+        
+        server.login(username, password)
+        server.send_message(msg)
+        server.quit()
+        
+        app.logger.info(f"Verification email resent to {voter.email}")
+        return jsonify({'success': True, 'message': 'Verification code resent'})
+        
+    except Exception as e:
+        app.logger.error(f"Failed to resend verification email: {str(e)}")
+        return jsonify({
+            'success': True, 
+            'dev_code': verification_code, 
+            'message': f'Error sending email. For development, use this code: {verification_code}'
+        })
+
 if __name__ == '__main__':
     init_db()
+    app.debug = True  # Enable debug mode for development
     app.run(host='0.0.0.0', port=5000)

@@ -8,28 +8,6 @@
     <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
 </head>
 <body>
-    <div id="dashboard" class="dashboard">
-        <button id="dashboardToggle" class="dashboard-toggle">Dashboard</button>
-        <div class="dashboard-content">
-            <h3>Voting Status</h3>
-            <div class="stats">
-                <div class="stat-item">
-                    <h5>Total Voters</h5>
-                    <p id="totalVoters">0</p>
-                </div>
-                <div class="stat-item">
-                    <h5>Voted</h5>
-                    <p id="votedCount">0</p>
-                </div>
-                <div class="stat-item">
-                    <h5>Remaining</h5>
-                    <p id="remainingVoters">0</p>
-                </div>
-            </div>
-            <h4>Candidate Results</h4>
-            <div id="candidateResults"></div>
-        </div>
-    </div>
     <div class="container mt-5">
         <div class="row justify-content-center">
             <div class="col-md-8">
@@ -68,42 +46,6 @@
     </div>
 
     <script>
-        const dashboard = document.getElementById('dashboard');
-        const dashboardToggle = document.getElementById('dashboardToggle');
-
-        dashboardToggle.addEventListener('click', () => {
-            dashboard.classList.toggle('open');
-        });
-
-        function updateDashboard() {
-            fetch('/dashboard_data')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('totalVoters').textContent = data.total_voters;
-                    document.getElementById('votedCount').textContent = data.voted_count;
-                    document.getElementById('remainingVoters').textContent = data.remaining_voters;
-
-                    const resultsHtml = data.candidate_votes.map(candidate => `
-                        <div class="candidate-result">
-                            <div class="name">${candidate.name}</div>
-                            <div class="progress">
-                                <div class="progress-bar" role="progressbar" 
-                                     style="width: ${candidate.percentage}%" 
-                                     aria-valuenow="${candidate.percentage}" 
-                                     aria-valuemin="0" aria-valuemax="100">
-                                    ${candidate.votes} (${candidate.percentage.toFixed(1)}%)
-                                </div>
-                            </div>
-                        </div>
-                    `).join('');
-                    document.getElementById('candidateResults').innerHTML = resultsHtml;
-                });
-        }
-
-        // Update dashboard every 5 seconds
-        updateDashboard();
-        setInterval(updateDashboard, 5000);
-
         document.getElementById('votingForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
